@@ -1,175 +1,114 @@
 <?php
 
+namespace SidebarTicker;
 
+use MediaWiki\Context\RequestContext;
+use MediaWiki\MediaWikiServices;
 
-namespace SidebarTicker {
-	use MediaWiki\Context\RequestContext;
-	class Hooks
-	{
-		// Borrowed from https://github.com/wikimedia/mediawiki-extensions-ParserFunctions/blob/cf1480cb9629514dd4400b1b83283ae6c83ff163/includes/ExtParserFunctions.php#L314
-		public static function pageExists(string $titleText, \Title $title)
-		{
-			$this->getLanguageConverter()->findVariantLink( $titletext, $title, true );
-			if ( $title )
-			{
-				if ( $title->getNamespace() === NS_SPECIAL )
-				{
-					return \SpecialPageFactory::exists( $title->getDBkey() ) ? true : false;
-				}
-				elseif ( $title->isExternal() )
-				{
-					return false;
-				}
-				else
-				{
-					$pdbk = $title->getPrefixedDBkey();
-					$lc = \LinkCache::singleton();
-					$id = $lc->getGoodLinkID( $pdbk );
-					if ( $id !== 0 )
-					{
-						return true;
-					}
-					elseif ( $lc->isBadLink( $pdbk ) )
-					{
-						return false;
-					}
-					$id = $title->getArticleID();
+class Hooks
+{
+    /**
+     * Prüft, ob eine Seite existiert.
+     *
+     * @param string $titleText Titel der Seite als Text
+     * @param \Title $title Instanz des Titles
+     * @return bool Gibt true zurück, wenn die Seite existiert, andernfalls false
+     */
+    public static function pageExists(string $titleText, \Title $title)
+    {
+        if ($title) {
+            if ($title->getNamespace() === NS_SPECIAL) {
+                return \SpecialPageFactory::exists($title->getDBkey());
+            } elseif ($title->isExternal()) {
+                return false;
+            } else {
+                // LinkCache über MediaWikiServices beziehen
+                $linkCache = MediaWikiServices::getInstance()->getLinkCache();
+                $prefixedDBKey = $title->getPrefixedDBkey();
 
-					if ( $title->exists() )
-					{
-						return true;
-					}
-				}
-			}
-			return false;
-		}
-
-		public static function onSkinBuildSidebar( $skin, &$sidebar )
-        {
-			$langcode = 'RequestContext'::getMain()->getLanguage()->getCode();
-            $tickerTitle = "SidebarTicker/".$langcode;
-            $title = \Title::newFromText( $tickerTitle );
-
-            #if (!$skin->getTitle()->isMainPage())
-            #{
-            #        return true;
-            #}
-
-            if (!$title || !Hooks::pageExists($tickerTitle, $title))
-            {
+                if ($linkCache->getGoodLinkID($prefixedDBKey)) {
                     return true;
+                } elseif ($linkCache->isBadLink($prefixedDBKey)) {
+                    return false;
+                }
+
+                return $title->exists();
             }
-            global $wgRequest;
-            $apiRequest = new \DerivativeRequest(
-                    $wgRequest,
-                    array(
-                            'action' => 'parse',
-                            'page' => $tickerTitle
-                    )
-            );
+        }
+        return false;
+    }
 
-            $api = new \ApiMain( $apiRequest, true );
-            $api->execute();
-            $result = $api->getResult();
-			
-            ob_start();
-			
-			
-        	?>
-            <style type="text/css">
-            .marqueeContainer
-            {
-                    position: relative;
+    /**
+     * Hook für den Aufbau der Sidebar.
+     *
+     * @param \Skin $skin Skin-Objekt
+     * @param array &$sidebar Referenz zur Sidebar, die angepasst wird
+     * @return bool
+     */
+    public static function onSkinBuildSidebar($skin, &$sidebar)
+    {
+        // Aktuelle Sprache des Benutzers ermitteln
+        $langCode = RequestContext::getMain()->getLanguage()->getCode();
+        $tickerTitle = "SidebarTicker/" . $langCode;
+        $title = \Title::newFromText($tickerTitle);
 
-                    width: 100%;
+        if (!$title || !self::pageExists($tickerTitle, $title)) {
+            return true;
+        }
 
-                    overflow: hidden;
-            }
+        // API-Request vorbereiten
+        $apiRequest = new \DerivativeRequest(
+            RequestContext::getMain()->getRequest(),
+            [
+                'action' => 'parse',
+                'page' => $tickerTitle
+            ]
+        );
 
-            .marqueeContainer p,
-            .marqueeContainer div
-            {
-            	width: intrinsic;           /* Safari/WebKit uses a non-standard name */
-				width: -moz-max-content;    /* Firefox/Gecko */
-				width: -webkit-max-content; /* Chrome */
-            }
-			.marqueeContainer .content
-			{
-				position: relative;
-				margin: 0;
+        $api = new \ApiMain($apiRequest, true);
+        $api->execute();
+        $result = $api->getResult();
 
-				-moz-transform:translateX(100%);
-				-webkit-transform:translateX(100%);
-				transform:translateX(100%);
-				-moz-animation: marquee 15s linear infinite;
-				-webkit-animation: marquee 15s linear infinite;
-				animation: marquee 15s linear infinite;
-			}
+        if (!isset($result->getResultData()["parse"]["text"])) {
+            return true; // Abbruch, wenn keine Daten zurückgegeben werden
+        }
 
-			.marqueeContainer .content .entry
-			{
-				display: inline-block;
-			}
+        $parsedContent = $result->getResultData()["parse"]["text"];
 
-			.marqueeContainer .content .entry:first-child::before,
-			.marqueeContainer .content .entry::after
-			{
-				content: ' +++ ';
-				display: inline-block;
-			}
-
-			@-moz-keyframes marquee {
-				0%   { left: 100%; -moz-transform: translateX(0%); }
-				100% { left:   0%; -moz-transform: translateX(-100%); }
-			}
-
-			@-webkit-keyframes marquee {
-				0%   { left: 100%; -webkit-transform: translateX(0%); }
-				100% { left:   0%; -webkit-transform: translateX(-100%); }
-			}
-
-			@keyframes marquee {
-				0%   {
-					left: 100%;
-					-moz-transform: translateX(0%); /* Firefox bug fix */
-					-webkit-transform: translateX(0%); /* Firefox bug fix */
-					transform: translateX(0%);
-				}
-				100% {
-					left:   0%;
-					-moz-transform: translateX(-100%); /* Firefox bug fix */
-					-webkit-transform: translateX(-100%); /* Firefox bug fix */
-					transform: translateX(-100%);
-				}
-			}
-			</style>
-			<?php
-			$format = ob_get_contents();
-			ob_end_clean();
-			ob_start();
-			
-		?>
-					%s
-		<?php
-			$content = ob_get_contents();
-			ob_end_clean();
-
-
-			$sidebar[ 'ticker' ] = $format . sprintf($content, $result->getResultData()["parse"]["text"]);
-			return true;
-		}
-	}
-
-	/**
-	 * @since 1.35
-	 * @return ILanguageConverter
-	 */
-	private function getLanguageConverter(): ILanguageConverter {
-		$services = MediaWikiServices::getInstance();
-		return $services
-			->getLanguageConverterFactory()
-			->getLanguageConverter( $services->getContentLanguage() );
-	}
-	
+        // CSS für den Ticker
+        $css = <<<CSS
+<style type="text/css">
+.marqueeContainer {
+    position: relative;
+    width: 100%;
+    overflow: hidden;
 }
+.marqueeContainer .content {
+    position: relative;
+    margin: 0;
+    transform: translateX(100%);
+    animation: marquee 15s linear infinite;
+}
+@keyframes marquee {
+    0% {
+        transform: translateX(100%);
+    }
+    100% {
+        transform: translateX(-100%);
+    }
+}
+</style>
+CSS;
 
+        // HTML-Wrapper für den Ticker
+        $htmlTemplate = <<<HTML
+<div class="marqueeContainer">
+    <div class="content">%s</div>
+</div>
+HTML;
+
+        // Füge den Ticker zur Sidebar hinzu
+        $sidebar['ticker'] = $css . sprintf($htmlTemplate, $parsedContent);
+        return true;
+    }
+}
